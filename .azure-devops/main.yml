@@ -1,0 +1,49 @@
+jobs:
+  - job: Build
+
+    steps:
+      - task: GoTool@0
+        inputs:
+          version: "1.20"
+
+      - task: Go@0
+        displayName: "Build"
+        env:
+          GOARCH: arm64
+        inputs:
+          command: build
+          workingDirectory: "$(System.DefaultWorkingDirectory)/golang/services/hello_world"
+          arguments: "-o $(Build.BinariesDirectory)/hello_world/bootstrap -tags lambda.norpc -trimpath -buildvcs=false"
+
+      - task: ArchiveFiles@2
+        displayName: "Zip"
+        inputs:
+          rootFolderOrFile: $(Build.BinariesDirectory)/hello_world
+          archiveType: zip
+          archiveFile: $(Build.ArtifactStagingDirectory)/hello_world.zip
+
+      - task: AWSShellScript@1
+        displayName: Compare hashes
+        inputs:
+          awsCredentials: $INPUT_FOR_AWS_CREDENTIALS
+          regionName: $AWS_REGION
+          scriptType: inline
+          disableAutoCwd: true
+          failOnStandardError: true
+          workingDirectory: $(Build.BinariesDirectory)/hello_world
+          inlineScript: |
+            GOLANG_BINARY_HASH=$(shasum bootstrap | cut -d' ' -f1)
+
+            S3_METADATA=$(aws s3api head-object \
+                      --bucket BUCKET_NAME \
+                      --key go/hello_world.zip \
+                      --query 'Metadata.sha256sum' \
+                      2> /dev/null \
+                      | tr -d '"')
+
+            if [ "$GOLANG_BINARY_HASH" != "$S3_METADATA" ]; then
+              echo "Hashes are not equal between local ($GOLANG_BINARY_HASH) and S3 ($S3_METADATA), or object doesn't exist on S3. Syncing code to S3"
+              aws s3 cp hello_world.zip s3://BUCKET_NAME/go/hello_world.zip --metadata "sha256sum=$binary_hash"
+            else
+              echo "Hashes are equal. Not syncing to S3"
+            fi
