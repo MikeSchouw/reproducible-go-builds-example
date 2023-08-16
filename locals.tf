@@ -1,3 +1,3 @@
 locals {
-    build_artifact_bucket = "BUCKET_NAME"
+  build_artifact_bucket = "BUCKET_NAME"
 }
